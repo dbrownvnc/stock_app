@@ -3,88 +3,91 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="주식 티커 자동 변환기", layout="wide")
+st.set_page_config(page_title="주식 티커 검색기", page_icon="🔍")
 
-# 2. 데이터 로드 (캐싱 적용)
+# 2. 데이터 로드
 @st.cache_data
 def load_stock_data():
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except:
+    except FileNotFoundError:
+        st.error("stocks.json 파일을 찾을 수 없습니다.")
         return []
 
 stock_list = load_stock_data()
 
-# 3. 검색 데이터 준비
-# (화면에 보여줄 이름) -> (실제 티커)를 찾는 딕셔너리 생성
-search_dict = {}
-search_options = []
+# --- 핵심 로직: 포맷팅 함수 만들기 ---
+
+# 3. 딕셔너리 생성 (Ticker -> 보여줄 이름)
+# 기계는 Ticker(키)를 갖고 놀고, 사람은 Value(이름)를 봅니다.
+ticker_dict = {}
 
 for stock in stock_list:
-    # 예: "삼성전자 (005930.KS)"
-    display_name = f"{stock['name_kr']} ({stock['ticker']})"
-    search_options.append(display_name)
-    search_dict[display_name] = stock['ticker']
+    # 딕셔너리 형태: {'NVDA': '엔비디아 (NVDA)', '005930.KS': '삼성전자 (005930.KS)'}
+    display_name = f"{stock['name_kr']} ({stock['ticker']})" 
+    ticker_dict[stock['ticker']] = display_name
 
-# --- 핵심 로직: 세션 상태 관리 ---
+# 4. 화면에 이름을 보여주는 함수 (format_func용)
+def format_option(ticker):
+    return ticker_dict.get(ticker, ticker)
 
-# A. 티커를 저장할 변수 초기화 (없으면 빈 문자열)
-if 'target_ticker' not in st.session_state:
-    st.session_state['target_ticker'] = ""
-
-# B. 콜백 함수: 검색창에서 선택했을 때 실행되는 함수
-def on_stock_select():
-    # 검색창(selectbox)의 현재 선택된 값을 가져옴
-    selected_text = st.session_state['stock_selector']
-    
-    if selected_text:
-        # 딕셔너리에서 티커를 찾아 'target_ticker' 변수에 덮어씀
-        ticker = search_dict[selected_text]
-        st.session_state['target_ticker'] = ticker
 
 # --- UI 구성 ---
 
-st.title("⚡ 주식 티커 자동 변환기")
-st.markdown("기업명을 선택하면 **티커 코드로 자동 변환**되어 입력됩니다.")
+st.title("🔍 스마트 티커 검색기")
+st.markdown("기업명을 선택하면 **티커(Ticker)**만 깔끔하게 입력됩니다.")
 
-col1, col2 = st.columns([1, 1])
+col1, col2 = st.columns([2, 1])
 
 with col1:
-    # [검색창]
-    # on_change=on_stock_select : 값이 바뀌면 위에서 만든 함수가 실행됨
-    st.selectbox(
-        "기업명 검색 (한글/영어)",
-        options=search_options,
+    # [A] 검색창 (Selectbox)
+    # options에는 실제 값인 '티커' 리스트를 넣습니다.
+    # format_func가 티커를 받아 '한글 이름'으로 바꿔서 보여줍니다.
+    selected_ticker = st.selectbox(
+        "기업 검색 (한글/영문)",
+        options=list(ticker_dict.keys()), # 실제 값: ['NVDA', 'AAPL', ...]
+        format_func=format_option,        # 화면 표시: '엔비디아 (NVDA)'
         index=None,
-        placeholder="검색어를 입력하세요...",
-        key="stock_selector", 
-        on_change=on_stock_select 
+        placeholder="종목을 선택하세요..."
     )
 
 with col2:
-    # [입력창]
-    # value=st.session_state['target_ticker'] : 세션에 저장된 티커 값이 여기에 표시됨
+    # [B] 결과 확인창 (Text Input)
+    # 위에서 선택된 값(selected_ticker)이 자동으로 여기에 꽂힙니다.
+    # 사용자가 직접 수정할 수도 있습니다.
     final_ticker = st.text_input(
-        "티커 (자동 입력됨)",
-        value=st.session_state['target_ticker'],
-        key="ticker_input" 
+        "티커 코드",
+        value=selected_ticker if selected_ticker else ""
     )
 
 st.divider()
 
-# --- 결과 처리 ---
+# --- 결과 출력 ---
 if final_ticker:
-    st.subheader(f"📈 {final_ticker} 차트")
+    st.subheader(f"📈 {final_ticker} 실시간 차트")
     
-    if st.button("차트 보기"):
-        with st.spinner('데이터 로딩 중...'):
+    if st.button("차트 불러오기"):
+        with st.spinner('데이터 수신 중...'):
             try:
-                df = yf.download(final_ticker, period="1mo", progress=False)
+                # 사용자가 직접 입력한 경우를 대비해 공백 제거 및 대문자 변환
+                clean_ticker = final_ticker.strip().upper()
+                
+                df = yf.download(clean_ticker, period="1mo", progress=False)
+                
                 if not df.empty:
                     st.line_chart(df['Close'])
-                    st.success(f"'{final_ticker}' 데이터 로드 성공")
+                    
+                    # 현재가 정보 표시
+                    last_price = df['Close'].iloc[-1]
+                    # last_price가 스칼라(숫자)인지 Series인지 확인하여 처리
+                    try:
+                        price_val = last_price.item() # 숫자만 추출
+                    except:
+                        price_val = last_price
+
+                    st.metric(label="현재 주가", value=f"{price_val:,.2f}")
                 else:
-                    st.error("데이터가 없습니다.")
+                    st.error(f"'{clean_ticker}'에 대한 데이터가 없습니다.")
             except Exception as e:
-                st.error(f"오류: {e}")
+                st.error(f"데이터를 가져오는 중 오류가 발생했습니다: {e}")
