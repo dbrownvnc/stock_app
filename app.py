@@ -1,99 +1,101 @@
 import streamlit as st
 import json
-import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="주식 티커 자동완성", page_icon="⚡")
+st.set_page_config(page_title="주식 티커 검색", page_icon="🔍")
 
-# 2. 데이터 로드 (캐싱)
+# 2. 데이터 준비 (테스트용 데이터 포함)
 @st.cache_data
-def load_stock_data():
+def load_data():
+    # 실제로는 stocks.json 파일을 읽어야 하지만, 
+    # 파일이 없을 경우를 대비해 기본 데이터를 넣어둡니다.
+    default_data = [
+        {"name_kr": "삼성전자", "ticker": "005930.KS"},
+        {"name_kr": "SK하이닉스", "ticker": "000660.KS"},
+        {"name_kr": "엔비디아", "ticker": "NVDA"},
+        {"name_kr": "테슬라", "ticker": "TSLA"},
+        {"name_kr": "애플", "ticker": "AAPL"},
+        {"name_kr": "마이크로소프트", "ticker": "MSFT"},
+        {"name_kr": "구글(알파벳)", "ticker": "GOOGL"},
+        {"name_kr": "아마존", "ticker": "AMZN"},
+        {"name_kr": "넷플릭스", "ticker": "NFLX"},
+        {"name_kr": "카카오", "ticker": "035720.KS"},
+        {"name_kr": "네이버", "ticker": "035420.KS"},
+    ]
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
             return json.load(f)
     except:
-        return []
+        return default_data
 
-stock_list = load_stock_data()
+stock_list = load_data()
 
-# 검색용 리스트 만들기 ["삼성전자 (005930.KS)", "엔비디아 (NVDA)", ...]
-search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
+# 3. 검색용 옵션 만들기
+# 예: "엔비디아 (NVDA)"
+option_map = {f"{s['name_kr']} ({s['ticker']})": s['ticker'] for s in stock_list}
+search_options = list(option_map.keys())
 
-# --- 핵심 로직: 상태(State) 관리 ---
+# --- 핵심 로직: 세션 상태 관리 ---
 
-# 'selected_ticker' 변수가 없으면 초기화 (현재 선택된 티커)
-if 'current_ticker' not in st.session_state:
-    st.session_state['current_ticker'] = None
+# 'selected_ticker'가 없으면 초기화
+if 'selected_ticker' not in st.session_state:
+    st.session_state['selected_ticker'] = None
 
-# 검색창에서 선택했을 때 실행될 콜백 함수
-def on_select():
-    # 선택된 값 가져오기 (예: "엔비디아 (NVDA)")
-    choice = st.session_state.search_box
-    if choice:
-        # 괄호 안의 티커만 추출 ("NVDA")
-        ticker = choice.split('(')[-1].replace(')', '')
-        st.session_state['current_ticker'] = ticker
+# [기능 1] 검색창에서 선택했을 때 실행
+def on_search_change():
+    selection = st.session_state.search_box_key
+    if selection:
+        # 선택된 값에서 티커만 추출하여 상태 저장
+        ticker = option_map[selection]
+        st.session_state['selected_ticker'] = ticker
 
-# 입력창에서 텍스트를 지웠을 때 실행될 콜백 함수 (다시 검색 모드로)
-def on_clear():
-    # 입력창이 비워지면 상태를 None으로 변경하여 다시 검색창을 띄움
-    if not st.session_state.ticker_input:
-        st.session_state['current_ticker'] = None
+# [기능 2] 입력창에서 내용을 지웠을 때 실행 (다시 검색모드로)
+def on_input_change():
+    # 입력된 텍스트가 없으면 검색 모드로 초기화
+    if not st.session_state.input_box_key:
+        st.session_state['selected_ticker'] = None
 
-# --- UI 구현 (같은 자리에 위젯 교체하기) ---
 
-st.title("⚡ 주식 티커 통합 검색기")
-st.markdown("검색어를 입력하고 선택하면 **티커**로 변환됩니다.")
+# --- UI 그리기 ---
 
-# ★ 마법의 자리 표시자 (이 위치에 위젯이 번갈아 나타남)
-input_container = st.empty()
+st.title("🔍 주식 티커 검색기")
+st.write("기업명을 선택하면 티커로 변환됩니다.")
 
-# [상태 1] 티커가 선택되지 않았을 때 -> "검색창(Selectbox)" 표시
-if st.session_state['current_ticker'] is None:
-    with input_container:
-        st.selectbox(
-            "종목 검색",
-            options=search_options,
-            index=None,
-            placeholder="기업명을 입력하세요 (예: 엔비, 삼성...)",
-            key="search_box",
-            on_change=on_select, # 선택하면 즉시 변환 함수 실행
-            label_visibility="collapsed" # 라벨 숨김 (깔끔하게)
-        )
-        st.info("👆 위 박스에 기업명을 입력해보세요.")
+# 1. 티커가 선택되지 않은 상태 -> [검색창(Selectbox)] 보여줌
+if st.session_state['selected_ticker'] is None:
+    st.selectbox(
+        label="기업명 검색",
+        options=search_options,
+        index=None,
+        placeholder="기업명을 선택하세요...",
+        key="search_box_key",
+        on_change=on_search_change,  # 값이 바뀌면 즉시 실행
+    )
 
-# [상태 2] 티커가 선택되었을 때 -> "입력창(Text Input)" 표시
+# 2. 티커가 선택된 상태 -> [텍스트 입력창(Text Input)] 보여줌
 else:
-    with input_container:
-        # 사용자가 수정을 원할 수 있으므로 text_input으로 보여줌
-        # 값은 "NVDA" 처럼 티커만 들어감
+    # 컬럼을 나눠서 '입력창'과 '취소버튼'을 배치
+    col1, col2 = st.columns([8, 1])
+    
+    with col1:
         st.text_input(
-            "티커",
-            value=st.session_state['current_ticker'],
-            key="ticker_input",
-            on_change=on_clear, # 내용을 지우면 다시 검색창으로 돌아감
-            label_visibility="collapsed"
+            label="티커 코드",
+            value=st.session_state['selected_ticker'],
+            key="input_box_key",
+            on_change=on_input_change
         )
-        st.caption("✅ 티커가 입력되었습니다. (지우면 다시 검색)")
+    
+    with col2:
+        # X 버튼을 누르면 강제로 검색 모드로 복귀
+        if st.button("❌", help="다시 검색하기"):
+            st.session_state['selected_ticker'] = None
+            st.rerun() # 화면 즉시 새로고침
 
-# --- 결과 출력 (티커가 있을 때만 실행) ---
-final_ticker = st.session_state['current_ticker']
-
-if final_ticker:
-    st.divider()
-    if st.button(f"'{final_ticker}' 차트 보기", type="primary"):
-        with st.spinner('데이터 불러오는 중...'):
-            try:
-                df = yf.download(final_ticker, period="1mo", progress=False)
-                if not df.empty:
-                    st.line_chart(df['Close'])
-                    current_price = df['Close'].iloc[-1]
-                    try: 
-                        val = current_price.item()
-                    except: 
-                        val = current_price
-                    st.metric("현재 주가", f"{val:,.2f}")
-                else:
-                    st.error("데이터를 찾을 수 없습니다.")
-            except Exception as e:
-                st.error(f"오류: {e}")
+# --- 결과 확인용 (티커가 있을 때만 표시) ---
+if st.session_state['selected_ticker']:
+    ticker = st.session_state['selected_ticker']
+    st.success(f"입력된 티커: **{ticker}**")
+    
+    # 여기에 yfinance 차트 코드 등을 넣으면 됩니다.
+    # import yfinance as yf
+    # st.line_chart(yf.download(ticker, period='1mo')['Close'])
