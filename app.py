@@ -4,7 +4,7 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="무한 자동완성 검색기", layout="centered")
+st.set_page_config(page_title="Ticker Only Search", layout="centered")
 
 # 2. 데이터 로드 (stocks.json 활용)
 @st.cache_data
@@ -18,14 +18,14 @@ def load_data():
             {"name_kr": "삼성전자", "ticker": "005930.KS"},
             {"name_kr": "엔비디아", "ticker": "NVDA"},
             {"name_kr": "테슬라", "ticker": "TSLA"},
-            {"name_kr": "애플", "ticker": "AAPL"}
+            {"name_kr": "애플", "ticker": "AAPL"},
+            {"name_kr": "마이크로소프트", "ticker": "MSFT"}
         ]
 
 stock_list = load_data()
 
-# 3. 검색 로직 함수 (사용자가 타이핑할 때마다 실행)
+# 3. 검색 로직 함수
 def search_stock(searchterm: str):
-    # 입력이 없으면 결과 없음
     if not searchterm:
         return []
     
@@ -33,9 +33,10 @@ def search_stock(searchterm: str):
     results = []
     
     for stock in stock_list:
-        # 이름이나 티커에 검색어 포함 시 리스트에 추가
+        # 한글명이나 티커로 검색 가능
         if searchterm in stock['name_kr'] or searchterm in stock['ticker'].lower():
-            # (화면에 보일 이름, 실제 반환할 티커값)
+            # [중요] (화면에 보여줄 문구, 실제로 입력창에 남길 값)
+            # 여기를 (이름+티커, 티커) 순으로 설정하여 선택 시 티커만 남게 합니다.
             label = f"{stock['name_kr']} ({stock['ticker']})"
             value = stock['ticker']
             results.append((label, value))
@@ -44,34 +45,37 @@ def search_stock(searchterm: str):
 
 # --- UI 구현 ---
 
-st.title("📈 통합 스마트 검색창")
-st.write("이미 입력된 상태에서도 **바로 타이핑**하면 자동완성이 시작됩니다.")
+st.title("🔍 티커 자동완성 검색기")
+st.write("선택 즉시 **티커**만 남으며, 언제든 다시 입력하여 검색할 수 있습니다.")
 
 # 4. 핵심 위젯: st_searchbox
-# edit_after_submit=True 설정으로 선택 후에도 즉시 재수정이 가능하게 만듭니다.
+# edit_after_submit=True: 선택 후에도 텍스트가 확정되지 않고 바로 수정 가능 모드 유지
 selected_ticker = st_searchbox(
     search_stock,
-    key="stock_search",
-    placeholder="기업명 또는 티커 입력...",
-    edit_after_submit=True, # ★ 선택 후에도 클릭 즉시 수정/검색 가능하게 하는 핵심 옵션
+    key="ticker_search_box",
+    placeholder="기업명 입력 (예: 삼성, 엔비...)",
+    edit_after_submit=True, 
 )
 
 # 5. 결과 분석 (차트)
 if selected_ticker:
     st.divider()
-    # 입력창 바로 아래 분석 결과 노출
     try:
+        # yfinance로 주가 데이터 가져오기
         df = yf.download(selected_ticker, period="1mo", progress=False)
+        
         if not df.empty:
-            st.subheader(f"📊 {selected_ticker} 주가 분석")
+            st.subheader(f"📊 {selected_ticker} 최근 한 달 차트")
             st.line_chart(df['Close'])
             
-            # 현재가 정보 표시
+            # 정보 요약 (Metric)
             last_price = df['Close'].iloc[-1]
-            st.metric("현재 종가", f"{last_price:,.2f}")
+            st.metric("최근 종가", f"{last_price:,.2f}")
         else:
-            st.error("데이터를 가져올 수 없는 종목입니다.")
+            # 사용자가 티커가 아닌 텍스트를 입력하고 엔터를 쳤을 경우 대비
+            st.warning("유효한 티커를 선택해 주세요.")
+            
     except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
+        st.error(f"데이터 로드 중 오류가 발생했습니다.")
 
-st.caption("💡 팁: 티커가 완성된 상태에서도 입력창을 클릭하고 바로 다른 기업명을 검색해 보세요.")
+st.caption("💡 팁: 입력창에 티커가 남아있어도 바로 지우거나 타이핑하면 즉시 재검색이 시작됩니다.")
