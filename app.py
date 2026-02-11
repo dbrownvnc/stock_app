@@ -1,13 +1,11 @@
 import streamlit as st
-from streamlit_searchbox import st_searchbox
 import json
 import yfinance as yf
-import uuid
 
 # 1. 페이지 설정
-st.set_page_config(page_title="티커 검색 마스터", layout="centered")
+st.set_page_config(page_title="Pro Ticker Search", layout="centered")
 
-# 2. 데이터 로드
+# 2. 데이터 로드 (캐싱 적용)
 @st.cache_data
 def load_data():
     try:
@@ -16,99 +14,98 @@ def load_data():
     except:
         return [
             {"name_kr": "삼성전자", "ticker": "005930.KS"},
+            {"name_kr": "SK하이닉스", "ticker": "000660.KS"},
             {"name_kr": "엔비디아", "ticker": "NVDA"},
             {"name_kr": "테슬라", "ticker": "TSLA"},
             {"name_kr": "애플", "ticker": "AAPL"},
-            {"name_kr": "마이크로소프트", "ticker": "MSFT"}
+            {"name_kr": "마이크로소프트", "ticker": "MSFT"},
+            {"name_kr": "아마존", "ticker": "AMZN"},
+            {"name_kr": "구글", "ticker": "GOOGL"},
         ]
 
 stock_list = load_data()
 
-# 3. 검색 로직 (이름+티커 검색 -> 리스트 표시)
-def search_stock(searchterm: str):
-    if not searchterm:
-        return []
+# 기본 검색 옵션 리스트 생성 ["삼성전자 (005930.KS)", ...]
+base_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-    searchterm = searchterm.lower().strip()
-    results = []
+# --- 핵심 로직: 상태 관리 및 동적 옵션 생성 ---
 
-    for stock in stock_list:
-        # 이름이나 티커로 검색
-        if searchterm in stock['name_kr'].lower() or searchterm in stock['ticker'].lower():
-            # 리스트에는 "이름 (티커)" 형태로 보여줌
-            label = f"{stock['name_kr']} ({stock['ticker']})"
-            # 실제 값은 "티커"만 전달
-            value = stock['ticker']
-            results.append((label, value))
+if 'selected_ticker' not in st.session_state:
+    st.session_state['selected_ticker'] = None
 
-    return results
-
-# --- 핵심 로직: 세션 상태 및 키 관리 ---
-
-# 검색창을 강제로 리셋하기 위한 고유 키 관리
-if 'search_box_key' not in st.session_state:
-    st.session_state['search_box_key'] = str(uuid.uuid4())
-
-if 'last_ticker' not in st.session_state:
-    st.session_state['last_ticker'] = ""
-
-# 검색창에서 값이 선택되었을 때 실행되는 로직
-def on_change_search():
-    # 현재 위젯의 키를 통해 값을 가져옴
-    current_key = st.session_state['search_box_key']
+# 위젯 값이 변경될 때 실행되는 함수
+def on_change():
+    value = st.session_state.search_box
     
-    # st_searchbox는 선택된 값이 session_state에 저장됨
-    if current_key in st.session_state:
-        selected_val = st.session_state[current_key]
-        
-        # 값이 선택되었다면?
-        if selected_val:
-            st.session_state['last_ticker'] = selected_val
-            # ★ 핵심: 키를 변경하여 위젯을 강제로 새로고침 (입력값을 티커로 덮어쓰기 위함)
-            st.session_state['search_box_key'] = str(uuid.uuid4())
+    if value:
+        # 선택된 값이 "삼성전자 (005930.KS)" 형태라면 티커만 추출
+        if "(" in value and ")" in value:
+            ticker = value.split('(')[-1].replace(')', '')
+        else:
+            # 이미 티커 형태("NVDA")라면 그대로 유지
+            ticker = value
+            
+        st.session_state['selected_ticker'] = ticker
+    else:
+        # X 버튼을 눌러 지운 경우
+        st.session_state['selected_ticker'] = None
+
+# [마법의 로직]
+# 현재 선택된 티커가 있다면, 그 티커를 옵션 리스트의 맨 앞에 '강제로' 추가합니다.
+# 이렇게 하면 selectbox는 'NVDA'라는 값을 선택한 상태로 렌더링되므로
+# 화면에는 긴 이름 대신 'NVDA'만 깔끔하게 보입니다.
+if st.session_state['selected_ticker']:
+    current_ticker = st.session_state['selected_ticker']
+    # 화면 표시용 옵션 리스트 = [현재 티커] + [원래 검색 리스트]
+    display_options = [current_ticker] + base_options
+    default_index = 0 # 맨 앞에 넣었으므로 인덱스는 0
+else:
+    display_options = base_options
+    default_index = None # 선택된 게 없으면 빈칸
 
 # --- UI 구현 ---
 
-st.title("⚡ 주식 티커 자동완성")
-st.write("입력창을 클릭하면 언제든 자동완성이 활성화됩니다.")
+st.title("⚡ 실시간 티커 검색기")
+st.write("이름으로 검색하고, 티커만 확인하세요. **클릭하면 바로 재검색** 됩니다.")
 
-# 4. 스마트 검색창
-# default 값에 last_ticker를 넣어주어, 리로딩될 때 티커가 입력창에 박히게 함
-ticker_input = st_searchbox(
-    search_stock,
-    key=st.session_state['search_box_key'], # 동적 키 사용
-    default=st.session_state['last_ticker'], # 선택된 티커를 기본값으로 설정
-    placeholder="기업명 검색 (예: 삼성, 엔비...)",
-    edit_after_submit=True, # 선택 후 즉시 수정 가능
-    on_change=on_change_search # 선택 감지 시 키 변경 로직 실행
+# 단 하나의 위젯으로 모든 기능 통합
+st.selectbox(
+    label="종목 검색",
+    options=display_options,     # 동적으로 변하는 옵션 리스트
+    index=default_index,         # 선택된 티커가 있으면 그걸 가리킴
+    placeholder="기업명 또는 티커를 입력하세요...",
+    key="search_box",
+    on_change=on_change,
+    label_visibility="collapsed" # 라벨 숨김 (깔끔하게)
 )
 
-# 5. 차트 및 데이터 출력 (오류 수정됨)
-if st.session_state['last_ticker']:
-    target_ticker = st.session_state['last_ticker']
+# --- 차트 및 데이터 출력 ---
+final_ticker = st.session_state['selected_ticker']
+
+if final_ticker:
     st.divider()
-    
     try:
-        with st.spinner(f"'{target_ticker}' 차트 로딩 중..."):
-            # 데이터 수집
-            df = yf.download(target_ticker, period="1mo", progress=False)
+        # 데이터 로딩
+        with st.spinner(f"Running Analysis for {final_ticker}..."):
+            df = yf.download(final_ticker, period="1mo", progress=False)
             
             if not df.empty:
-                st.subheader(f"📊 {target_ticker} 분석")
+                # 차트 출력
+                st.subheader(f"📊 {final_ticker} Chart")
                 st.line_chart(df['Close'])
                 
-                # [오류 해결] Series -> float 변환 후 포맷팅
+                # 현재가 출력 (포맷팅 오류 방지 코드 포함)
                 last_val = df['Close'].iloc[-1]
                 try:
-                    # .item()은 numpy 데이터타입일 경우 파이썬 스칼라로 변환
-                    price = float(last_val.item())
+                    price = float(last_val.item()) # Series -> float 변환
                 except:
                     price = float(last_val)
-
-                st.metric("최근 종가", f"{price:,.2f}")
+                    
+                st.metric("Current Price", f"{price:,.2f}")
             else:
-                st.warning("데이터를 찾을 수 없습니다. 올바른 티커인지 확인해주세요.")
-                
+                st.warning("데이터를 불러올 수 없습니다. 티커를 확인해주세요.")
     except Exception as e:
-        # yfinance 일시적 오류 등이 발생할 수 있으므로 예외 처리
-        st.error("데이터 통신 중 오류가 발생했습니다.")
+        st.error(f"오류가 발생했습니다: {e}")
+
+# 사용 팁 안내 (하단 고정)
+st.caption("💡 **Tip:** 입력창에 `NVDA`가 있어도 클릭하고 `삼`을 치면 즉시 삼성전자가 검색됩니다.")
