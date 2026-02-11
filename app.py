@@ -3,9 +3,9 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="스마트 티커 검색", page_icon="📈")
+st.set_page_config(page_title="무한 자동완성 검색기", page_icon="🔄")
 
-# 2. 데이터 로드 (stocks.json 활용)
+# 2. 데이터 로드
 @st.cache_data
 def load_data():
     try:
@@ -22,73 +22,75 @@ def load_data():
 stock_list = load_data()
 search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-# --- 핵심 로직: 상태 관리 ---
+# --- 핵심: 세션 상태 관리 (무한 루프의 핵심) ---
 
-# 'edit_mode'가 True면 검색창이 뜨고, False면 결과값(티커)이 고정됨
-if 'edit_mode' not in st.session_state:
-    st.session_state['edit_mode'] = True
+# 초기 상태 설정
 if 'selected_ticker' not in st.session_state:
     st.session_state['selected_ticker'] = ""
+if 'input_mode' not in st.session_state:
+    st.session_state['input_mode'] = "search"  # "search" 또는 "result"
 
-# [이벤트 1] 검색창에서 종목을 선택했을 때
-def on_select():
-    val = st.session_state.search_box
-    if val:
-        # 티커 추출 및 저장
-        ticker = val.split('(')[-1].replace(')', '')
+# [함수 1] 검색창에서 종목을 선택했을 때 실행
+def handle_selection():
+    if st.session_state.search_box:
+        # 선택된 값에서 티커만 추출
+        ticker = st.session_state.search_box.split('(')[-1].replace(')', '')
         st.session_state['selected_ticker'] = ticker
-        # 선택 완료되었으므로 편집 모드 종료
-        st.session_state['edit_mode'] = False
+        st.session_state['input_mode'] = "result"
+        # 검색창 자체는 비워줌 (다음에 돌아왔을 때를 위해)
+        st.session_state.search_box = None
 
-# [이벤트 2] 입력된 티커를 클릭(선택)하여 다시 입력하고 싶을 때
-def enable_edit():
-    st.session_state['edit_mode'] = True
+# [함수 2] 티커 결과창을 클릭하여 수정하려 할 때 실행
+def handle_re_edit():
+    # 사용자가 결과창의 텍스트를 건드리면(지우거나 수정하면) 즉시 검색 모드로 복구
+    st.session_state['input_mode'] = "search"
     st.session_state['selected_ticker'] = ""
 
 # --- UI 구현 ---
 
-st.title("🔍 주식 티커 통합 검색")
+st.title("🔄 무한 자동완성 티커 검색")
+st.write("선택하면 티커로 변환되고, 티커를 지우면 다시 검색창이 뜹니다.")
 
-# 같은 자리에 위젯을 교체하기 위한 컨테이너
-container = st.empty()
+# 동일한 위치에 위젯을 교체하기 위한 placeholder
+placeholder = st.empty()
 
-if st.session_state['edit_mode']:
-    # [상태 1] 검색 모드 (사용자가 텍스트 입력 중)
-    with container:
+if st.session_state['input_mode'] == "search":
+    # [상태 1] 검색 모드
+    with placeholder:
         st.selectbox(
-            "기업 검색",
+            "종목 검색",
             options=search_options,
             index=None,
             placeholder="기업명을 입력하세요...",
             key="search_box",
-            on_change=on_select,
+            on_change=handle_selection,
             label_visibility="collapsed"
         )
 else:
-    # [상태 2] 완성 모드 (티커가 입력창에 남아있는 모습)
-    with container:
-        # 이 입력창을 클릭하거나 내용을 바꾸려고 하면 즉시 enable_edit 함수 실행
+    # [상태 2] 티커 결과 모드
+    with placeholder:
+        # 사용자가 이 창을 클릭하고 글자를 지우는 순간 handle_re_edit 실행됨
         st.text_input(
-            "티커",
+            "확정된 티커",
             value=st.session_state['selected_ticker'],
-            key="display_box",
-            on_change=enable_edit, # 사용자가 글자를 지우거나 수정하려 하면 즉시 검색모드로!
-            label_visibility="collapsed",
-            help="클릭 후 내용을 지우면 다시 검색할 수 있습니다."
+            key="result_box",
+            on_change=handle_re_edit,
+            label_visibility="collapsed"
         )
 
-# --- 차트 및 데이터 출력 ---
-current_ticker = st.session_state['selected_ticker']
-
-if current_ticker:
-    st.divider()
-    st.subheader(f"📊 {current_ticker} 분석")
+# --- 결과 출력 (티커가 확정되었을 때만) ---
+if st.session_state['selected_ticker'] and st.session_state['input_mode'] == "result":
+    ticker = st.session_state['selected_ticker']
+    st.success(f"현재 입력된 티커: **{ticker}**")
     
-    # 여기서 바로 차트를 보여주거나 버튼을 배치할 수 있습니다.
-    if st.button(f"{current_ticker} 데이터 불러오기"):
-        with st.spinner("로딩 중..."):
-            df = yf.download(current_ticker, period="1mo", progress=False)
+    # 차트 기능 예시
+    if st.button(f"{ticker} 차트 불러오기"):
+        with st.spinner("데이터 수신 중..."):
+            df = yf.download(ticker, period="1mo", progress=False)
             if not df.empty:
                 st.line_chart(df['Close'])
             else:
                 st.error("데이터를 찾을 수 없습니다.")
+
+st.divider()
+st.caption("💡 팁: 자동완성된 티커를 클릭하고 'Backspace'로 지우면 바로 다시 검색할 수 있습니다.")
