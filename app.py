@@ -3,121 +3,91 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="티커 자동완성", page_icon="⚡")
+st.set_page_config(page_title="원터치 티커 검색", page_icon="⚡")
 
 # 2. 데이터 준비
 @st.cache_data
 def load_data():
-    # 파일이 없을 경우를 대비한 샘플 데이터
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
-            stock_list = json.load(f)
+            return json.load(f)
     except:
-        stock_list = [
+        return [
             {"name_kr": "삼성전자", "ticker": "005930.KS"},
             {"name_kr": "SK하이닉스", "ticker": "000660.KS"},
             {"name_kr": "엔비디아", "ticker": "NVDA"},
             {"name_kr": "테슬라", "ticker": "TSLA"},
             {"name_kr": "애플", "ticker": "AAPL"},
-            {"name_kr": "마이크로소프트", "ticker": "MSFT"},
         ]
-    return stock_list
 
 stock_list = load_data()
-
-# 3. 검색용 옵션 리스트 생성
-# 예: "삼성전자 (005930.KS)"
 search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-# --- 핵심 로직: 상태(State) 관리 ---
+# --- 핵심 로직: 상태 관리 ---
 
-# 현재 모드 설정 (True: 티커 확정 상태 / False: 검색 중 상태)
-if 'is_confirmed' not in st.session_state:
-    st.session_state['is_confirmed'] = False
-if 'current_value' not in st.session_state:
-    st.session_state['current_value'] = ""
+# 현재 선택된 티커가 있는지 확인
+if 'selected_ticker' not in st.session_state:
+    st.session_state['selected_ticker'] = None
 
-# [이벤트 1] 검색창에서 선택했을 때 -> 티커 확정 모드로 변경
-def on_search():
-    selection = st.session_state.search_input
+# [A] 검색창에서 선택 시 실행 -> 티커 저장
+def on_select():
+    selection = st.session_state.search_box
     if selection:
-        # "엔비디아 (NVDA)" -> "NVDA" 추출
         ticker = selection.split('(')[-1].replace(')', '')
-        st.session_state['current_value'] = ticker
-        st.session_state['is_confirmed'] = True
+        st.session_state['selected_ticker'] = ticker
 
-# [이벤트 2] 확정된 티커 입력창을 건드렸을 때
-def on_result_change():
-    # 현재 입력된 값을 가져옴
-    new_val = st.session_state.result_input
-    
-    # 만약 내용을 지웠다면? -> 다시 검색 모드로 복귀
-    if not new_val:
-        st.session_state['is_confirmed'] = False
-        st.session_state['current_value'] = ""
-    # 내용을 지운 게 아니라 수정한 거라면? (예: NVDA -> NV) -> 값만 업데이트
-    else:
-        st.session_state['current_value'] = new_val
+# [B] 결과 버튼 클릭 시 실행 -> 초기화 (다시 검색 모드)
+def on_reset():
+    st.session_state['selected_ticker'] = None
 
-# [이벤트 3] 강제 리셋 (X 버튼)
-def reset_search():
-    st.session_state['is_confirmed'] = False
-    st.session_state['current_value'] = ""
 
-# --- UI 구현 (같은 자리에서 변신) ---
+# --- UI 구현 ---
 
-st.title("⚡ 티커 자동 변환기")
-st.markdown("기업명을 선택하면 티커로 변환됩니다.")
+st.title("⚡ 원터치 티커 검색기")
+st.write("결과를 클릭하면 다시 검색할 수 있습니다.")
 
-# 위젯이 그려질 자리 (이 자리에 검색창 또는 결과창이 번갈아 뜸)
-input_spot = st.empty()
+# 위젯이 들어갈 자리 (컨테이너)
+input_container = st.empty()
 
-# [상황 A] 아직 선택 안함 -> 검색창(Selectbox) 보여주기
-if not st.session_state['is_confirmed']:
-    with input_spot:
+# [상태 1] 티커가 없을 때 -> 검색창(Selectbox) 표시
+if st.session_state['selected_ticker'] is None:
+    with input_container:
         st.selectbox(
-            label="종목 검색",
+            "종목 검색",
             options=search_options,
             index=None,
             placeholder="기업명을 입력하세요 (예: 엔비, 삼성...)",
-            key="search_input",
-            on_change=on_search, # 선택 즉시 실행
+            key="search_box",
+            on_change=on_select, # 선택 즉시 상태 변경
             label_visibility="collapsed"
         )
 
-# [상황 B] 선택 완료 -> 결과창(Text Input) 보여주기 (값은 티커)
+# [상태 2] 티커가 있을 때 -> [버튼]으로 표시 (클릭하면 리셋됨)
 else:
-    with input_spot:
-        col_in, col_btn = st.columns([8, 1])
-        
-        with col_in:
-            st.text_input(
-                label="티커",
-                value=st.session_state['current_value'],
-                key="result_input",
-                on_change=on_result_change, # 수정 시 실행
-                label_visibility="collapsed"
-            )
-        
-        with col_btn:
-            # 재입력을 쉽게 하기 위한 초기화 버튼
-            st.button("🔄", on_click=reset_search, help="다시 검색하기")
+    with input_container:
+        # 버튼의 라벨을 티커로 설정
+        # use_container_width=True를 써서 입력창처럼 꽉 차게 보이게 함
+        st.button(
+            label=st.session_state['selected_ticker'],  # 버튼 글씨 = "NVDA"
+            key="reset_btn",
+            on_click=on_reset,  # 클릭하면 초기화 함수 실행
+            use_container_width=True, # 화면 너비 꽉 채우기
+            type="primary", # 강조 색상 (선택됨을 표현)
+            help="클릭하면 다시 검색할 수 있습니다."
+        )
+        st.caption("👆 위 티커를 클릭하면 다시 검색합니다.")
 
-# --- 하단 결과 로직 ---
-final_ticker = st.session_state['current_value'] if st.session_state['is_confirmed'] else None
+# --- 결과 차트 출력 ---
+current_ticker = st.session_state['selected_ticker']
 
-if final_ticker:
-    st.caption("✅ 티커 입력 완료! (수정하려면 위 텍스트를 지우거나 🔄 버튼 클릭)")
+if current_ticker:
     st.divider()
-    
-    # 실제 데이터 조회 예시
-    if st.button("차트 조회"):
-        with st.spinner(f"'{final_ticker}' 데이터 조회 중..."):
-            try:
-                df = yf.download(final_ticker, period="1mo", progress=False)
-                if not df.empty:
-                    st.line_chart(df['Close'])
-                else:
-                    st.error("데이터가 없습니다.")
-            except:
-                st.error("올바르지 않은 티커입니다.")
+    with st.spinner(f"'{current_ticker}' 데이터 불러오는 중..."):
+        try:
+            df = yf.download(current_ticker, period="1mo", progress=False)
+            if not df.empty:
+                st.line_chart(df['Close'])
+            else:
+                st.warning("데이터가 없습니다.")
+        except:
+            pass
