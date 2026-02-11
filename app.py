@@ -3,91 +3,92 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="원터치 티커 검색", page_icon="⚡")
+st.set_page_config(page_title="주식 티커 자동완성", page_icon="⚡")
 
 # 2. 데이터 준비
 @st.cache_data
 def load_data():
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
+            stock_list = json.load(f)
     except:
-        return [
+        stock_list = [
             {"name_kr": "삼성전자", "ticker": "005930.KS"},
             {"name_kr": "SK하이닉스", "ticker": "000660.KS"},
             {"name_kr": "엔비디아", "ticker": "NVDA"},
             {"name_kr": "테슬라", "ticker": "TSLA"},
             {"name_kr": "애플", "ticker": "AAPL"},
         ]
+    return stock_list
 
 stock_list = load_data()
+
+# 3. 검색 데이터 생성
+# 검색창 옵션: "엔비디아 (NVDA)"
 search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-# --- 핵심 로직: 상태 관리 ---
+# --- 상태 관리 ---
 
-# 현재 선택된 티커가 있는지 확인
 if 'selected_ticker' not in st.session_state:
     st.session_state['selected_ticker'] = None
 
-# [A] 검색창에서 선택 시 실행 -> 티커 저장
+# [기능 1] 검색창에서 선택 시 -> 티커 확정
 def on_select():
     selection = st.session_state.search_box
     if selection:
         ticker = selection.split('(')[-1].replace(')', '')
         st.session_state['selected_ticker'] = ticker
 
-# [B] 결과 버튼 클릭 시 실행 -> 초기화 (다시 검색 모드)
+# [기능 2] 결과 버튼 클릭 시 -> 검색 모드로 복귀 (초기화)
 def on_reset():
     st.session_state['selected_ticker'] = None
-
 
 # --- UI 구현 ---
 
 st.title("⚡ 원터치 티커 검색기")
-st.write("결과를 클릭하면 다시 검색할 수 있습니다.")
+st.write("완성된 티커를 **클릭**하면 다시 검색할 수 있습니다.")
 
-# 위젯이 들어갈 자리 (컨테이너)
-input_container = st.empty()
+# 위젯 자리 표시자
+placeholder = st.empty()
 
-# [상태 1] 티커가 없을 때 -> 검색창(Selectbox) 표시
+# [상태 A] 검색 모드 (아직 선택 안 함)
 if st.session_state['selected_ticker'] is None:
-    with input_container:
+    with placeholder:
         st.selectbox(
-            "종목 검색",
+            label="종목 검색",
             options=search_options,
             index=None,
-            placeholder="기업명을 입력하세요 (예: 엔비, 삼성...)",
+            placeholder="기업명을 입력하세요...",
             key="search_box",
-            on_change=on_select, # 선택 즉시 상태 변경
+            on_change=on_select,
             label_visibility="collapsed"
         )
 
-# [상태 2] 티커가 있을 때 -> [버튼]으로 표시 (클릭하면 리셋됨)
+# [상태 B] 결과 모드 (티커 확정됨)
 else:
-    with input_container:
-        # 버튼의 라벨을 티커로 설정
-        # use_container_width=True를 써서 입력창처럼 꽉 차게 보이게 함
+    ticker = st.session_state['selected_ticker']
+    with placeholder:
+        # ★ 핵심 포인트: 결과를 '버튼'으로 보여줍니다.
+        # 버튼을 누르면 on_reset 함수가 실행되어 다시 검색창이 뜹니다.
         st.button(
-            label=st.session_state['selected_ticker'],  # 버튼 글씨 = "NVDA"
-            key="reset_btn",
-            on_click=on_reset,  # 클릭하면 초기화 함수 실행
-            use_container_width=True, # 화면 너비 꽉 채우기
-            type="primary", # 강조 색상 (선택됨을 표현)
-            help="클릭하면 다시 검색할 수 있습니다."
+            label=f"✅ {ticker}  (클릭하여 수정)", # 버튼에 표시될 텍스트
+            on_click=on_reset,                    # 클릭 시 초기화 실행
+            use_container_width=True,             # 입력창처럼 꽉 차게 보임
+            type="primary"                        # 강조 색상 (선택사항)
         )
-        st.caption("👆 위 티커를 클릭하면 다시 검색합니다.")
 
-# --- 결과 차트 출력 ---
+# --- 차트 출력 ---
 current_ticker = st.session_state['selected_ticker']
 
 if current_ticker:
     st.divider()
-    with st.spinner(f"'{current_ticker}' 데이터 불러오는 중..."):
-        try:
-            df = yf.download(current_ticker, period="1mo", progress=False)
-            if not df.empty:
-                st.line_chart(df['Close'])
-            else:
-                st.warning("데이터가 없습니다.")
-        except:
-            pass
+    if st.button("차트 조회"):
+        with st.spinner(f"{current_ticker} 데이터 불러오는 중..."):
+            try:
+                df = yf.download(current_ticker, period="1mo", progress=False)
+                if not df.empty:
+                    st.line_chart(df['Close'])
+                else:
+                    st.error("데이터가 없습니다.")
+            except Exception as e:
+                st.error("오류 발생")
