@@ -3,7 +3,7 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="Ticker Search", layout="centered")
+st.set_page_config(page_title="무한 티커 검색기", layout="centered")
 
 # 2. 데이터 로드
 @st.cache_data
@@ -22,67 +22,55 @@ def load_data():
 stock_list = load_data()
 search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-# --- 상태 관리 로직 ---
+# --- 핵심 로직: 단일 위젯 무한 루프 ---
 
-if 'ticker' not in st.session_state:
-    st.session_state['ticker'] = ""
-if 'edit_mode' not in st.session_state:
-    st.session_state['edit_mode'] = True
+# 실제 활용할 티커 저장용 세션 상태
+if 'final_ticker' not in st.session_state:
+    st.session_state['final_ticker'] = ""
 
-# [A] 검색창에서 종목을 골랐을 때
-def on_select():
-    val = st.session_state.search_box
-    if val:
-        ticker = val.split('(')[-1].replace(')', '')
-        st.session_state['ticker'] = ticker
-        st.session_state['edit_mode'] = False # 결과 고정 모드로 변경
+def on_change():
+    # 사용자가 무언가를 선택했을 때
+    if st.session_state.master_search:
+        # 티커 추출
+        ticker = st.session_state.master_search.split('(')[-1].replace(')', '')
+        st.session_state['final_ticker'] = ticker
+        
+        # ★ 핵심: 선택 직후 위젯의 선택 상태를 다시 초기화하여 '언제나 입력 가능'하게 만듦
+        # st.session_state.master_search = None (이 구문은 내부적으로 다음 렌더링 시 적용됨)
 
-# [B] 완성된 티커창을 클릭/수정할 때
-def on_re_edit():
-    st.session_state['edit_mode'] = True # 다시 검색 모드로 변경
-    st.session_state['ticker'] = ""
+# --- UI 구현 ---
 
-# --- UI 구현 (입력창 하나만 노출) ---
+st.title("📈 통합 종목 검색")
 
-st.title("📈 Stock Analyzer")
+# placeholder_text를 현재 선택된 티커로 동적 변경 (선택된 게 있으면 그걸 보여줌)
+current_view = st.session_state['final_ticker']
+display_placeholder = f"현재: {current_view} (클릭하여 새 종목 검색)" if current_view else "종목명 또는 티커를 입력하세요"
 
-# 입력창이 놓일 단일 위치
-ui_space = st.empty()
+# 단 하나의 위젯으로 승부
+st.selectbox(
+    label="종목 검색",
+    options=search_options,
+    index=None, # 항상 비어있는 상태로 시작/유지
+    placeholder=display_placeholder,
+    key="master_search",
+    on_change=on_change,
+    label_visibility="collapsed"
+)
 
-if st.session_state['edit_mode']:
-    # [모드 1] 검색/자동완성 창
-    with ui_space:
-        st.selectbox(
-            label="Search",
-            options=search_options,
-            index=None,
-            placeholder="기업명 또는 티커를 입력하세요",
-            key="search_box",
-            on_change=on_select,
-            label_visibility="collapsed"
-        )
-else:
-    # [모드 2] 결과 티커 창 (자동완성된 결과가 입력창에 남음)
-    with ui_space:
-        st.text_input(
-            label="Ticker",
-            value=st.session_state['ticker'],
-            key="result_box",
-            on_change=on_re_edit, # 클릭 후 수정/삭제 시 즉시 검색모드로 전환
-            label_visibility="collapsed"
-        )
-
-# --- 결과 로직 (입력창 바로 아래에 차트 출력) ---
-final_ticker = st.session_state['ticker']
-
-if final_ticker and not st.session_state['edit_mode']:
-    # 별도의 "선택된 티커: XX" 같은 텍스트 없이 바로 기능을 수행합니다.
+# --- 결과 출력 (입력창 바로 아래에 차트 연결) ---
+if st.session_state['final_ticker']:
+    target = st.session_state['final_ticker']
+    
+    # 별도 텍스트 없이 바로 차트나 데이터 출력
     try:
-        # 데이터가 있는지 확인 후 차트 출력
-        df = yf.download(final_ticker, period="1mo", progress=False)
+        # yfinance 데이터 가져오기 (매번 다시 다운로드하지 않도록 캐싱 고려 가능)
+        df = yf.download(target, period="1mo", progress=False)
         if not df.empty:
+            st.subheader(f"📊 {target} 주가 추이")
             st.line_chart(df['Close'])
         else:
-            st.error("데이터를 불러올 수 없는 티커입니다.")
+            st.error("데이터를 불러올 수 없습니다.")
     except Exception as e:
-        st.error("오류가 발생했습니다.")
+        st.error("오류 발생")
+
+st.caption("💡 창을 클릭하면 언제든지 즉시 새로운 종목을 검색하고 자동완성할 수 있습니다.")
