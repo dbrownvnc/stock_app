@@ -1,19 +1,17 @@
 import streamlit as st
-from streamlit_searchbox import st_searchbox
 import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="Ticker Auto-Complete", layout="centered")
+st.set_page_config(page_title="티커 자동완성기", layout="centered")
 
-# 2. 데이터 로드 (stocks.json 활용)
+# 2. 데이터 로드
 @st.cache_data
 def load_data():
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
             return json.load(f)
-    except FileNotFoundError:
-        # 테스트용 더미 데이터
+    except:
         return [
             {"name_kr": "삼성전자", "ticker": "005930.KS"},
             {"name_kr": "엔비디아", "ticker": "NVDA"},
@@ -23,104 +21,87 @@ def load_data():
         ]
 
 stock_list = load_data()
+search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
 
-# 3. 검색 로직
-def search_stock(searchterm: str):
-    if not searchterm:
-        return []
-    
-    searchterm = searchterm.lower().strip()
-    results = []
-    
-    for stock in stock_list:
-        if searchterm in stock['name_kr'].lower() or searchterm in stock['ticker'].lower():
-            # 검색 리스트에는 '이름 (티커)' 형태로 친절하게 보여줌
-            label = f"{stock['name_kr']} ({stock['ticker']})"
-            value = stock['ticker']
-            results.append((label, value))
-            
-    return results
+# --- 상태 관리 ---
 
-# --- 상태 관리 (세션 스테이트) ---
+if 'ticker' not in st.session_state:
+    st.session_state['ticker'] = ""
 if 'search_mode' not in st.session_state:
-    st.session_state['search_mode'] = True  # True: 검색창 / False: 결과창
-if 'selected_ticker' not in st.session_state:
-    st.session_state['selected_ticker'] = ""
+    st.session_state['search_mode'] = True
 
-# 검색창에서 값을 선택했을 때 실행
-def on_search_submit(value):
-    if value:
-        st.session_state['selected_ticker'] = value
-        st.session_state['search_mode'] = False # 결과창 모드로 전환
-        # st.rerun()은 st_searchbox 내부 로직과 충돌할 수 있으므로 상태만 변경
+# [동작 A] 검색창에서 선택 시 -> 티커만 추출하여 결과 모드로 전환
+def on_select():
+    selection = st.session_state.search_box
+    if selection:
+        # "엔비디아 (NVDA)" -> "NVDA" 추출
+        ticker = selection.split('(')[-1].replace(')', '')
+        st.session_state['ticker'] = ticker
+        st.session_state['search_mode'] = False # 결과창 모드로 변경
 
-# 결과창(티커)을 수정하려고 할 때 실행
-def on_result_change():
-    st.session_state['search_mode'] = True # 다시 검색 모드로 전환
-    st.session_state['selected_ticker'] = ""
+# [동작 B] 결과창을 건드렸을 때 -> 다시 검색 모드로 복귀
+def on_modify():
+    st.session_state['search_mode'] = True
+    st.session_state['ticker'] = ""
 
-# --- UI 구현 (같은 위치에서 위젯 교체) ---
+# --- UI 구현 (같은 자리에서 변신) ---
 
-st.title("📈 주식 티커 검색기")
-st.markdown("이름으로 검색하면 **티커**만 입력됩니다.")
+st.title("📈 티커 검색기")
+st.caption("이름으로 검색하면 **티커**만 입력됩니다.")
 
-# 위젯이 표시될 컨테이너
-search_container = st.empty()
+# 위젯이 교체될 공간
+ui_container = st.empty()
 
-# [모드 A] 검색 중일 때 (st_searchbox 표시)
 if st.session_state['search_mode']:
-    with search_container:
-        # 1. 검색 위젯
-        new_selection = st_searchbox(
-            search_stock,
-            key="stock_searchbox",
-            placeholder="기업명 검색 (예: 삼성, 엔비...)",
-            # 키가 바뀌면 위젯이 초기화되므로 고정 키 사용
-        )
-        
-        # 2. 선택 감지 및 모드 전환 로직
-        if new_selection and new_selection != st.session_state.get('last_selection'):
-            st.session_state['selected_ticker'] = new_selection
-            st.session_state['search_mode'] = False
-            st.session_state['last_selection'] = new_selection
-            st.rerun() # 화면 새로고침하여 text_input으로 교체
-
-# [모드 B] 선택 완료 시 (st.text_input 표시)
-else:
-    with search_container:
-        st.text_input(
-            "Ticker",
-            value=st.session_state['selected_ticker'],
-            key="result_ticker_input",
-            on_change=on_result_change, # 텍스트를 건드리면 즉시 검색모드로 복귀
+    # [모드 1] 검색창 (자동완성)
+    with ui_container:
+        st.selectbox(
+            "종목 검색",
+            options=search_options,
+            index=None,
+            placeholder="기업명을 입력하세요 (예: 삼성, 엔비...)",
+            key="search_box",
+            on_change=on_select,
             label_visibility="collapsed"
         )
-        st.caption("✅ 티커 입력 완료. (수정하려면 위 텍스트를 지우세요)")
+else:
+    # [모드 2] 결과창 (티커 텍스트만 남음)
+    with ui_container:
+        st.text_input(
+            "티커",
+            value=st.session_state['ticker'],
+            key="result_box",
+            on_change=on_modify, # 클릭해서 내용을 지우면 즉시 검색모드로
+            label_visibility="collapsed"
+        )
 
-# --- 결과 분석 및 오류 수정 ---
-final_ticker = st.session_state['selected_ticker']
+# --- 결과 및 차트 출력 (오류 수정됨) ---
+
+final_ticker = st.session_state['ticker']
 
 if final_ticker and not st.session_state['search_mode']:
     st.divider()
     try:
-        # 데이터 가져오기
+        # 데이터 다운로드
         df = yf.download(final_ticker, period="1mo", progress=False)
         
         if not df.empty:
             st.subheader(f"📊 {final_ticker} 차트")
             st.line_chart(df['Close'])
             
-            # [오류 수정] Series 포맷팅 문제 해결
-            # iloc[-1]로 값을 가져온 뒤 .item()을 호출하여 순수 파이썬 float로 변환
-            last_close = df['Close'].iloc[-1]
+            # [오류 해결 핵심] Series 객체를 float(실수)로 명확하게 변환
+            last_close_series = df['Close'].iloc[-1]
+            
+            # yfinance 버전에 따라 스칼라가 아닌 Series가 반환될 수 있으므로 처리
             try:
-                price_val = last_close.item() 
+                current_price = float(last_close_series.item())
             except:
-                price_val = float(last_close)
-                
-            st.metric("최근 종가", f"{price_val:,.2f}")
+                current_price = float(last_close_series)
+
+            st.metric("최근 종가", f"{current_price:,.2f}")
         else:
-            st.warning("데이터를 불러올 수 없습니다. 올바른 티커인지 확인해주세요.")
+            st.error("데이터를 찾을 수 없습니다.")
             
     except Exception as e:
-        st.error(f"시스템 오류 발생: {e}")
+        # 디버깅을 위해 에러 메시지는 숨기고 사용자에게 안내
+        st.error(f"데이터를 불러오는 중 문제가 발생했습니다. (티커 확인 필요)")
