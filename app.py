@@ -3,88 +3,88 @@ import json
 import yfinance as yf
 
 # 1. 페이지 설정
-st.set_page_config(page_title="주식 티커 자동완성", page_icon="⚡")
+st.set_page_config(page_title="주식 티커 자동 변환기", layout="wide")
 
-# 2. 데이터 로드 (캐싱)
+# 2. 데이터 로드 (캐싱 적용)
 @st.cache_data
-def load_data():
+def load_stock_data():
     try:
         with open('stocks.json', 'r', encoding='utf-8') as f:
             return json.load(f)
     except:
         return []
 
-stock_list = load_data()
+stock_list = load_stock_data()
 
-# 3. 검색용 데이터 사전 만들기 (이름 -> 티커 매핑)
-# 검색창에 보여질 "이름 (티커)" 문자열과 실제 "티커"를 연결합니다.
-search_map = {}
+# 3. 검색 데이터 준비
+# (화면에 보여줄 이름) -> (실제 티커)를 찾는 딕셔너리 생성
+search_dict = {}
 search_options = []
 
 for stock in stock_list:
-    # 드롭다운에 표시될 글자: "엔비디아 (NVDA) - NASDAQ"
-    display_label = f"{stock['name_kr']} ({stock['ticker']})"
-    search_options.append(display_label)
-    
-    # 이 라벨을 선택하면 실제 티커(NVDA)를 찾을 수 있게 저장
-    search_map[display_label] = stock['ticker']
+    # 예: "삼성전자 (005930.KS)"
+    display_name = f"{stock['name_kr']} ({stock['ticker']})"
+    search_options.append(display_name)
+    search_dict[display_name] = stock['ticker']
 
-# --- 기능 구현 (Session State 활용) ---
+# --- 핵심 로직: 세션 상태 관리 ---
 
-# 만약 세션에 티커 값이 없으면 초기화
+# A. 티커를 저장할 변수 초기화 (없으면 빈 문자열)
 if 'target_ticker' not in st.session_state:
     st.session_state['target_ticker'] = ""
 
-# 콜백 함수: 검색창에서 무언가 선택했을 때 실행됨
-def update_ticker_input():
-    selection = st.session_state.search_box  # 검색창의 현재 값
-    if selection:
-        # 선택된 라벨(엔비디아...)로 티커(NVDA)를 찾아서 입력창 상태 업데이트
-        found_ticker = search_map[selection]
-        st.session_state['target_ticker'] = found_ticker
+# B. 콜백 함수: 검색창에서 선택했을 때 실행되는 함수
+def on_stock_select():
+    # 검색창(selectbox)의 현재 선택된 값을 가져옴
+    selected_text = st.session_state['stock_selector']
+    
+    if selected_text:
+        # 딕셔너리에서 티커를 찾아 'target_ticker' 변수에 덮어씀
+        ticker = search_dict[selected_text]
+        st.session_state['target_ticker'] = ticker
 
 # --- UI 구성 ---
 
 st.title("⚡ 주식 티커 자동 변환기")
+st.markdown("기업명을 선택하면 **티커 코드로 자동 변환**되어 입력됩니다.")
 
-col1, col2 = st.columns([2, 1])
+col1, col2 = st.columns([1, 1])
 
 with col1:
-    # [A] 검색 도우미 (Selectbox)
+    # [검색창]
+    # on_change=on_stock_select : 값이 바뀌면 위에서 만든 함수가 실행됨
     st.selectbox(
-        label="기업명으로 검색하세요 (자동완성)",
+        "기업명 검색 (한글/영어)",
         options=search_options,
         index=None,
-        placeholder="예: 삼성, 엔비, 테슬라...",
-        key="search_box",       # 이 위젯의 ID
-        on_change=update_ticker_input  # 값이 바뀌면 위의 함수 실행!
+        placeholder="검색어를 입력하세요...",
+        key="stock_selector", 
+        on_change=on_stock_select 
     )
 
 with col2:
-    # [B] 실제 티커 입력창 (Text Input)
-    # 검색창에서 선택하면 여기가 자동으로 'NVDA'로 바뀝니다.
-    # 사용자가 직접 타이핑해서 수정할 수도 있습니다.
+    # [입력창]
+    # value=st.session_state['target_ticker'] : 세션에 저장된 티커 값이 여기에 표시됨
     final_ticker = st.text_input(
-        label="티커 코드 (자동 입력)",
+        "티커 (자동 입력됨)",
         value=st.session_state['target_ticker'],
-        key="ticker_input_field"
+        key="ticker_input" 
     )
 
 st.divider()
 
-# --- 결과 출력 ---
+# --- 결과 처리 ---
 if final_ticker:
-    st.subheader(f"📊 {final_ticker} 분석 결과")
+    st.subheader(f"📈 {final_ticker} 차트")
     
-    if st.button("데이터 불러오기"):
-        try:
-            with st.spinner(f"{final_ticker} 데이터를 가져오는 중..."):
-                df = yf.download(final_ticker, period="1mo")
-                
+    if st.button("차트 보기"):
+        with st.spinner('데이터 로딩 중...'):
+            try:
+                df = yf.download(final_ticker, period="1mo", progress=False)
                 if not df.empty:
                     st.line_chart(df['Close'])
-                    st.success(f"현재가: ${df['Close'].iloc[-1]:.2f} (또는 원)")
+                    st.success(f"'{final_ticker}' 데이터 로드 성공")
                 else:
-                    st.error("데이터를 찾을 수 없습니다. 티커를 확인해주세요.")
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
+                    st.error("데이터가 없습니다.")
+            except Exception as e:
+                st.error(f"오류: {e}")
