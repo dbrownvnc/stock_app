@@ -1,74 +1,103 @@
-import FinanceDataReader as fdr
-import pandas as pd
+import streamlit as st
+from streamlit_searchbox import st_searchbox
 import json
+import yfinance as yf
 
-print("데이터 수집을 시작합니다... (약 1~2분 소요)")
+# 1. 페이지 설정
+st.set_page_config(page_title="Anytime Autocomplete", layout="centered")
 
-# 1. 한국 주식 전 종목 가져오기 (KOSPI, KOSDAQ)
-kr_stocks = fdr.StockListing('KRX')
-# 필요한 컬럼만 선택
-kr_stocks = kr_stocks[['Code', 'Name', 'Market']]
+# 2. 데이터 로드
+@st.cache_data
+def load_data():
+    try:
+        with open('stocks.json', 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        # 테스트 데이터
+        return [
+            {"name_kr": "삼성전자", "ticker": "005930.KS"},
+            {"name_kr": "SK하이닉스", "ticker": "000660.KS"},
+            {"name_kr": "엔비디아", "ticker": "NVDA"},
+            {"name_kr": "테슬라", "ticker": "TSLA"},
+            {"name_kr": "애플", "ticker": "AAPL"},
+            {"name_kr": "마이크로소프트", "ticker": "MSFT"}
+        ]
 
-stock_list = []
+stock_list = load_data()
 
-# 한국 주식 데이터 변환
-for idx, row in kr_stocks.iterrows():
-    ticker = row['Code']
-    # yfinance용 티커로 변환 (코스피: .KS, 코스닥: .KQ)
-    if row['Market'] == 'KOSPI':
-        ticker += ".KS"
-    elif row['Market'] == 'KOSDAQ':
-        ticker += ".KQ"
+# 3. [핵심] 검색 로직 함수
+def search_engine(searchterm: str):
+    # 검색어가 없으면 추천 리스트(상위 5개)를 보여줄 수도 있음
+    # 여기서는 빈 리스트 반환
+    if not searchterm:
+        return []
+
+    searchterm = searchterm.lower().strip()
+    results = []
+
+    for stock in stock_list:
+        # [중요] 한글 이름이나 티커(소문자)에 검색어가 포함되면 결과에 추가
+        # 예: 'nvda'를 입력해도 '엔비디아 (NVDA)'가 검색되도록 함
+        if searchterm in stock['name_kr'].lower() or searchterm in stock['ticker'].lower():
+            
+            # [UI 핵심] 리스트에는 '이름+티커'를 보여주고,
+            # 선택 시 입력창에는 '티커'만 남기도록 튜플(Label, Value)로 반환
+            label = f"{stock['name_kr']} ({stock['ticker']})"
+            value = stock['ticker']
+            results.append((label, value))
+
+    return results
+
+# --- UI 구현 ---
+
+st.title("⚡ Always-On 자동완성")
+st.write("입력창을 클릭하면 **언제든** 자동완성 기능이 활성화됩니다.")
+
+# 4. 자동완성 위젯
+# key: 위젯 고유 ID
+# edit_after_submit=True: 선택 후에도 텍스트 수정 모드가 유지됨 (클릭 시 재검색 가능)
+selected_ticker = st_searchbox(
+    search_engine,
+    key="my_searchbox",
+    placeholder="종목명 또는 티커 검색...",
+    edit_after_submit=True,
+)
+
+# 5. 결과 처리 및 오류 수정
+if selected_ticker:
+    st.divider()
     
-    stock_list.append({
-        "ticker": ticker,
-        "name_kr": row['Name'],
-        "market": row['Market']
-    })
+    # 리스트에 없는 임의의 값 입력 방지용 검증
+    is_valid_ticker = any(s['ticker'] == selected_ticker for s in stock_list)
 
-print(f"한국 주식 {len(stock_list)}개 수집 완료.")
+    if is_valid_ticker:
+        try:
+            with st.spinner(f"'{selected_ticker}' 차트 로딩 중..."):
+                # yfinance 데이터 다운로드
+                df = yf.download(selected_ticker, period="1mo", progress=False)
+                
+                if not df.empty:
+                    st.subheader(f"📊 {selected_ticker} 주가 차트")
+                    st.line_chart(df['Close'])
+                    
+                    # [오류 완벽 수정 구간]
+                    # DataFrame/Series에서 값을 꺼낼 때 명시적으로 float 변환
+                    last_val = df['Close'].iloc[-1]
+                    try:
+                        # .item()은 numpy 데이터타입을 파이썬 스칼라로 변환
+                        current_price = float(last_val.item())
+                    except:
+                        # 구버전 pandas/numpy 호환
+                        current_price = float(last_val)
 
-# 2. 미국 주식 (S&P 500) 가져오기
-# 주의: 무료 API로는 '미국 주식의 한글명'을 완벽하게 가져오기 어렵습니다.
-# 여기서는 S&P 500 종목을 가져오되, 주요 종목은 수동으로 한글 매핑을 하고 
-# 나머지는 영어 이름을 그대로 사용하거나 티커를 보여주는 방식을 씁니다.
-
-sp500 = fdr.StockListing('S&P500')
-
-# 자주 찾는 미국 주식 한글 매핑 (필요한 만큼 추가하세요)
-us_kor_map = {
-    "AAPL": "애플", "MSFT": "마이크로소프트", "NVDA": "엔비디아", "TSLA": "테슬라",
-    "GOOGL": "구글(알파벳A)", "GOOG": "구글(알파벳C)", "AMZN": "아마존",
-    "META": "메타(페이스북)", "NFLX": "넷플릭스", "AMD": "AMD", "INTC": "인텔",
-    "QCOM": "퀄컴", "TXN": "텍사스 인스트루먼트", "AVGO": "브로드컴",
-    "AMAT": "어플라이드 머티어리얼즈", "MU": "마이크론", "SBUX": "스타벅스",
-    "NKE": "나이키", "KO": "코카콜라", "MCD": "맥도날드", "DIS": "디즈니",
-    "QQQ": "인베스코 QQQ (ETF)", "SPY": "SPDR S&P500 (ETF)", 
-    "SOXL": "디렉시온 반도체 3배(ETF)", "TQQQ": "프로쉐어즈 나스닥 3배(ETF)"
-}
-
-count_us = 0
-for idx, row in sp500.iterrows():
-    ticker = row['Symbol']
-    eng_name = row['Name']
-    
-    # 우리가 아는 한글 이름이 있으면 그걸 쓰고, 없으면 영어 이름 사용
-    if ticker in us_kor_map:
-        name_final = us_kor_map[ticker]
+                    st.metric("현재가", f"{current_price:,.2f}")
+                else:
+                    st.error("차트 데이터를 불러올 수 없습니다.")
+        except Exception as e:
+            st.error(f"데이터 처리 중 오류가 발생했습니다.")
     else:
-        name_final = eng_name # 한글 매핑 없는 건 영어 이름 그대로
-        
-    stock_list.append({
-        "ticker": ticker,
-        "name_kr": name_final,
-        "market": "US"
-    })
-    count_us += 1
+        # 유효하지 않은 입력일 때
+        if len(selected_ticker) > 0:
+             st.warning("⚠️ 검색 결과 목록에서 종목을 선택해주세요.")
 
-print(f"미국 주식 {count_us}개 수집 완료.")
-
-# 3. JSON 파일로 저장
-with open('stocks.json', 'w', encoding='utf-8') as f:
-    json.dump(stock_list, f, ensure_ascii=False, indent=4)
-
-print(f"총 {len(stock_list)}개 종목이 'stocks.json'에 저장되었습니다.")
+st.caption("💡 팁: 입력창에 티커가 있어도, 클릭하고 글자를 치면 바로 검색됩니다.")
