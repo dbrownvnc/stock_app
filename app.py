@@ -1,107 +1,74 @@
-import streamlit as st
+import FinanceDataReader as fdr
+import pandas as pd
 import json
-import yfinance as yf
 
-# 1. 페이지 설정
-st.set_page_config(page_title="티커 자동완성기", layout="centered")
+print("데이터 수집을 시작합니다... (약 1~2분 소요)")
 
-# 2. 데이터 로드
-@st.cache_data
-def load_data():
-    try:
-        with open('stocks.json', 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except:
-        return [
-            {"name_kr": "삼성전자", "ticker": "005930.KS"},
-            {"name_kr": "엔비디아", "ticker": "NVDA"},
-            {"name_kr": "테슬라", "ticker": "TSLA"},
-            {"name_kr": "애플", "ticker": "AAPL"},
-            {"name_kr": "마이크로소프트", "ticker": "MSFT"}
-        ]
+# 1. 한국 주식 전 종목 가져오기 (KOSPI, KOSDAQ)
+kr_stocks = fdr.StockListing('KRX')
+# 필요한 컬럼만 선택
+kr_stocks = kr_stocks[['Code', 'Name', 'Market']]
 
-stock_list = load_data()
-search_options = [f"{s['name_kr']} ({s['ticker']})" for s in stock_list]
+stock_list = []
 
-# --- 상태 관리 ---
+# 한국 주식 데이터 변환
+for idx, row in kr_stocks.iterrows():
+    ticker = row['Code']
+    # yfinance용 티커로 변환 (코스피: .KS, 코스닥: .KQ)
+    if row['Market'] == 'KOSPI':
+        ticker += ".KS"
+    elif row['Market'] == 'KOSDAQ':
+        ticker += ".KQ"
+    
+    stock_list.append({
+        "ticker": ticker,
+        "name_kr": row['Name'],
+        "market": row['Market']
+    })
 
-if 'ticker' not in st.session_state:
-    st.session_state['ticker'] = ""
-if 'search_mode' not in st.session_state:
-    st.session_state['search_mode'] = True
+print(f"한국 주식 {len(stock_list)}개 수집 완료.")
 
-# [동작 A] 검색창에서 선택 시 -> 티커만 추출하여 결과 모드로 전환
-def on_select():
-    selection = st.session_state.search_box
-    if selection:
-        # "엔비디아 (NVDA)" -> "NVDA" 추출
-        ticker = selection.split('(')[-1].replace(')', '')
-        st.session_state['ticker'] = ticker
-        st.session_state['search_mode'] = False # 결과창 모드로 변경
+# 2. 미국 주식 (S&P 500) 가져오기
+# 주의: 무료 API로는 '미국 주식의 한글명'을 완벽하게 가져오기 어렵습니다.
+# 여기서는 S&P 500 종목을 가져오되, 주요 종목은 수동으로 한글 매핑을 하고 
+# 나머지는 영어 이름을 그대로 사용하거나 티커를 보여주는 방식을 씁니다.
 
-# [동작 B] 결과창을 건드렸을 때 -> 다시 검색 모드로 복귀
-def on_modify():
-    st.session_state['search_mode'] = True
-    st.session_state['ticker'] = ""
+sp500 = fdr.StockListing('S&P500')
 
-# --- UI 구현 (같은 자리에서 변신) ---
+# 자주 찾는 미국 주식 한글 매핑 (필요한 만큼 추가하세요)
+us_kor_map = {
+    "AAPL": "애플", "MSFT": "마이크로소프트", "NVDA": "엔비디아", "TSLA": "테슬라",
+    "GOOGL": "구글(알파벳A)", "GOOG": "구글(알파벳C)", "AMZN": "아마존",
+    "META": "메타(페이스북)", "NFLX": "넷플릭스", "AMD": "AMD", "INTC": "인텔",
+    "QCOM": "퀄컴", "TXN": "텍사스 인스트루먼트", "AVGO": "브로드컴",
+    "AMAT": "어플라이드 머티어리얼즈", "MU": "마이크론", "SBUX": "스타벅스",
+    "NKE": "나이키", "KO": "코카콜라", "MCD": "맥도날드", "DIS": "디즈니",
+    "QQQ": "인베스코 QQQ (ETF)", "SPY": "SPDR S&P500 (ETF)", 
+    "SOXL": "디렉시온 반도체 3배(ETF)", "TQQQ": "프로쉐어즈 나스닥 3배(ETF)"
+}
 
-st.title("📈 티커 검색기")
-st.caption("이름으로 검색하면 **티커**만 입력됩니다.")
-
-# 위젯이 교체될 공간
-ui_container = st.empty()
-
-if st.session_state['search_mode']:
-    # [모드 1] 검색창 (자동완성)
-    with ui_container:
-        st.selectbox(
-            "종목 검색",
-            options=search_options,
-            index=None,
-            placeholder="기업명을 입력하세요 (예: 삼성, 엔비...)",
-            key="search_box",
-            on_change=on_select,
-            label_visibility="collapsed"
-        )
-else:
-    # [모드 2] 결과창 (티커 텍스트만 남음)
-    with ui_container:
-        st.text_input(
-            "티커",
-            value=st.session_state['ticker'],
-            key="result_box",
-            on_change=on_modify, # 클릭해서 내용을 지우면 즉시 검색모드로
-            label_visibility="collapsed"
-        )
-
-# --- 결과 및 차트 출력 (오류 수정됨) ---
-
-final_ticker = st.session_state['ticker']
-
-if final_ticker and not st.session_state['search_mode']:
-    st.divider()
-    try:
-        # 데이터 다운로드
-        df = yf.download(final_ticker, period="1mo", progress=False)
+count_us = 0
+for idx, row in sp500.iterrows():
+    ticker = row['Symbol']
+    eng_name = row['Name']
+    
+    # 우리가 아는 한글 이름이 있으면 그걸 쓰고, 없으면 영어 이름 사용
+    if ticker in us_kor_map:
+        name_final = us_kor_map[ticker]
+    else:
+        name_final = eng_name # 한글 매핑 없는 건 영어 이름 그대로
         
-        if not df.empty:
-            st.subheader(f"📊 {final_ticker} 차트")
-            st.line_chart(df['Close'])
-            
-            # [오류 해결 핵심] Series 객체를 float(실수)로 명확하게 변환
-            last_close_series = df['Close'].iloc[-1]
-            
-            # yfinance 버전에 따라 스칼라가 아닌 Series가 반환될 수 있으므로 처리
-            try:
-                current_price = float(last_close_series.item())
-            except:
-                current_price = float(last_close_series)
+    stock_list.append({
+        "ticker": ticker,
+        "name_kr": name_final,
+        "market": "US"
+    })
+    count_us += 1
 
-            st.metric("최근 종가", f"{current_price:,.2f}")
-        else:
-            st.error("데이터를 찾을 수 없습니다.")
-            
-    except Exception as e:
-        # 디버깅을 위해 에러 메시지는 숨기고 사용자에게 안내
-        st.error(f"데이터를 불러오는 중 문제가 발생했습니다. (티커 확인 필요)")
+print(f"미국 주식 {count_us}개 수집 완료.")
+
+# 3. JSON 파일로 저장
+with open('stocks.json', 'w', encoding='utf-8') as f:
+    json.dump(stock_list, f, ensure_ascii=False, indent=4)
+
+print(f"총 {len(stock_list)}개 종목이 'stocks.json'에 저장되었습니다.")
